@@ -1,35 +1,43 @@
 import sys
 from pathlib import Path
-
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
-from src.features.url_features import extract_all_features
 import numpy as np
 import pandas as pd
-from sklearn.metrics import (
-    roc_auc_score, average_precision_score,
-    classification_report, confusion_matrix
-)
-from sklearn.model_selection import GroupShuffleSplit
+import joblib
 import lightgbm as lgb
 import matplotlib.pyplot as plt
 
+from sklearn.metrics import (
+    roc_auc_score,
+    average_precision_score,
+    classification_report,
+    confusion_matrix,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_curve,
+    auc,
+    ConfusionMatrixDisplay,
+)
+from sklearn.model_selection import GroupShuffleSplit
 
+from src.features.build_features import extract_all_features
+
+
+BASE_DIR = Path(__file__).resolve().parent
+CSV_PATH = BASE_DIR.parent.parent / "data" / "raw" / "better_url_dataset.csv"
 
 
 # -----------------------------
 # 0) Load CSV -> urls, y
 # -----------------------------
-import os
-
-BASE_DIR = Path(__file__).resolve().parent
-CSV_PATH = os.path.join(BASE_DIR, "..", "..", "data", "raw", "better_url_dataset.csv")
 df = pd.read_csv(CSV_PATH)
 
 df["url"] = df["url"].astype(str).str.strip()
 df["type"] = df["type"].astype(str).str.lower().str.strip()
 
-BAD_TOKENS  = {"phishing", "malicious", "bad", "spam", "phish", "1", "true", "yes"}
+BAD_TOKENS = {"phishing", "malicious", "bad", "spam", "phish", "1", "true", "yes"}
 GOOD_TOKENS = {"legitimate", "benign", "good", "clean", "0", "false", "no"}
 
 mask = df["type"].isin(BAD_TOKENS | GOOD_TOKENS)
@@ -37,8 +45,11 @@ df = df[mask].copy()
 
 urls = df["url"].tolist()
 y = df["type"].isin(BAD_TOKENS).astype(int).to_numpy()
-urls = urls[:5000] # Temp data limt
-y = y[:5000] # temp data limit 
+
+# TEMP LIMIT FOR TESTING
+urls = urls[:5000]
+y = y[:5000]
+
 total = len(y)
 counts = np.bincount(y)
 
@@ -53,7 +64,12 @@ print("Label counts:", np.bincount(y))
 # 1) Build feature matrix
 # -----------------------------
 def build_X(urls_list):
-    rows = [extract_all_features(u) for u in urls_list]
+    rows = []
+    for i, u in enumerate(urls_list):
+        if i % 100 == 0:
+            print(f"Processing URL {i}/{len(urls_list)}")
+        rows.append(extract_all_features(u, use_page_features=True))
+
     Xdf = pd.DataFrame(rows)
 
     drop_cols = ["scheme", "netloc", "path", "params", "query", "fragment", "domain", "query_params"]
@@ -63,19 +79,19 @@ def build_X(urls_list):
     Xdf = Xdf.select_dtypes(include=[np.number])
     return Xdf
 
+
 X = build_X(urls)
 y = np.array(y, dtype=int)
 
 
 # -----------------------------
-# 2) Domain-level train/valid split
-# -----------------------------
-# -----------------------------
 # 2) Domain-level Train/Valid/Test split
 # -----------------------------
-domains = [u.split("/")[2] for u in urls]
+domains = []
+for u in urls:
+    parts = u.split("/")
+    domains.append(parts[2] if len(parts) > 2 else u)
 
-# First split: Train (70%) + Temp (30%)
 gss1 = GroupShuffleSplit(n_splits=1, test_size=0.3, random_state=42)
 train_idx, temp_idx = next(gss1.split(X, y, groups=domains))
 
@@ -86,7 +102,6 @@ X_temp = X.iloc[temp_idx]
 y_temp = y[temp_idx]
 domains_temp = [domains[i] for i in temp_idx]
 
-# Second split: Validation (15%) + Test (15%)
 gss2 = GroupShuffleSplit(n_splits=1, test_size=0.5, random_state=42)
 valid_idx, test_idx = next(gss2.split(X_temp, y_temp, groups=domains_temp))
 
@@ -95,12 +110,15 @@ y_valid = y_temp[valid_idx]
 
 X_test = X_temp.iloc[test_idx]
 y_test = y_temp[test_idx]
+
+
 def show_distribution(name, labels):
     total = len(labels)
     counts = np.bincount(labels)
     print(f"\n{name} distribution:")
     print(f"  Legit (0): {counts[0]} ({counts[0]/total:.2%})")
     print(f"  Phish (1): {counts[1]} ({counts[1]/total:.2%})")
+
 
 show_distribution("TRAIN", y_train)
 show_distribution("VALID", y_valid)
@@ -149,11 +167,6 @@ clf.fit(
     ]
 )
 
-# -----------------------------
-# Save trained model (.pkl)
-# -----------------------------
-import joblib
-
 MODEL_DIR = BASE_DIR.parent.parent / "models" / "trained"
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -165,8 +178,10 @@ joblib.dump(list(X.columns), COLS_PATH)
 
 print(f"\nModel saved to: {MODEL_PATH}")
 print(f"Feature columns saved to: {COLS_PATH}")
+
+
 # -----------------------------
-# 5) Feature importances (AFTER fit)
+# 5) Feature importances
 # -----------------------------
 booster = clf.booster_
 
@@ -185,7 +200,7 @@ print("\nTop 25 importances (gain):\n", gain_imp.head(25))
 
 
 # -----------------------------
-# 6) Predictions (uncalibrated)
+# 6) Predictions
 # -----------------------------
 proba = clf.predict_proba(X_valid)[:, 1]
 
@@ -194,45 +209,68 @@ print("PR-AUC :", average_precision_score(y_valid, proba))
 
 
 # -----------------------------
-# 7) Optional: calibrated probabilities
-#     (calibrate AFTER the model is trained)
+# 7) Threshold helpers
 # -----------------------------
-USE_CALIBRATION = False
+def evaluate_threshold(y_true, probs, threshold):
+    preds = (probs >= threshold).astype(int)
 
-if USE_CALIBRATION:
-    from sklearn.calibration import CalibratedClassifierCV
-    cal = CalibratedClassifierCV(clf, method="sigmoid", cv=3)
-    cal.fit(X_train, y_train)
-    proba = cal.predict_proba(X_valid)[:, 1]
-    print("\n[Calibrated]")
-    print("ROC-AUC:", roc_auc_score(y_valid, proba))
-    print("PR-AUC :", average_precision_score(y_valid, proba))
+    tn, fp, fn, tp = confusion_matrix(y_true, preds).ravel()
+
+    precision = precision_score(y_true, preds, zero_division=0)
+    recall = recall_score(y_true, preds, zero_division=0)
+    f1 = f1_score(y_true, preds, zero_division=0)
+    fpr = fp / (fp + tn) if (fp + tn) > 0 else 0
+
+    return {
+        "threshold": float(threshold),
+        "precision": float(precision),
+        "recall": float(recall),
+        "f1": float(f1),
+        "fpr": float(fpr),
+        "tn": int(tn),
+        "fp": int(fp),
+        "fn": int(fn),
+        "tp": int(tp),
+    }
+
+
+def choose_threshold_with_fpr_budget(y_true, probs, target_fpr=0.01):
+    best_score = None
+    best_stats = None
+
+    for t in np.arange(0.10, 0.96, 0.01):
+        stats = evaluate_threshold(y_true, probs, float(t))
+
+        if stats["fpr"] <= target_fpr:
+            score = (stats["recall"], stats["precision"], stats["f1"], -stats["threshold"])
+            if best_score is None or score > best_score:
+                best_score = score
+                best_stats = stats
+
+    if best_stats is None:
+        for t in np.arange(0.10, 0.96, 0.01):
+            stats = evaluate_threshold(y_true, probs, float(t))
+            score = (stats["f1"], -stats["fpr"], stats["recall"])
+            if best_score is None or score > best_score:
+                best_score = score
+                best_stats = stats
+
+    return best_stats
 
 
 # -----------------------------
-# 8) Pick best threshold (max F1)
+# 8) Pick threshold
 # -----------------------------
-thresholds = np.linspace(0.05, 0.95, 19)
-best_thr, best_f1 = 0.5, -1.0
+threshold_stats = choose_threshold_with_fpr_budget(y_valid, proba, target_fpr=0.01)
+best_thr = threshold_stats["threshold"]
 
-for t in thresholds:
-    p = (proba >= t).astype(int)
-    tp = int(((p == 1) & (y_valid == 1)).sum())
-    fp = int(((p == 1) & (y_valid == 0)).sum())
-    fn = int(((p == 0) & (y_valid == 1)).sum())
-
-    precision = tp / max(1, tp + fp)
-    recall = tp / max(1, tp + fn)
-    f1 = 0.0 if (precision + recall) == 0 else 2 * precision * recall / (precision + recall)
-
-    if f1 > best_f1:
-        best_thr, best_f1 = float(t), float(f1)
-
-print("\nBest F1 threshold:", best_thr, "F1:", best_f1)
+print("\nChosen threshold stats:")
+print(threshold_stats)
 
 pred = (proba >= best_thr).astype(int)
 print("Confusion matrix:\n", confusion_matrix(y_valid, pred))
 print(classification_report(y_valid, pred, digits=4, zero_division=0))
+
 
 # -----------------------------
 # FINAL TEST EVALUATION
@@ -247,15 +285,32 @@ print("PR-AUC :", average_precision_score(y_test, proba_test))
 print("Confusion Matrix:\n", confusion_matrix(y_test, pred_test))
 print(classification_report(y_test, pred_test, digits=4, zero_division=0))
 
-# -----------------------------
-# 9) Plots for presentation
-# -----------------------------
-from sklearn.metrics import roc_curve, auc, ConfusionMatrixDisplay
 
-# Use the proba you already computed (either calibrated or not)
-# proba = clf.predict_proba(X_valid)[:, 1]  # already done earlier
+# -----------------------------
+# False-positive inspection
+# -----------------------------
+test_urls = [urls[i] for i in temp_idx]
+test_urls = [test_urls[i] for i in test_idx]
 
-# ---- (A) ROC Curve ----
+results_df = pd.DataFrame({
+    "url": test_urls,
+    "y_true": y_test,
+    "y_pred": pred_test,
+    "y_prob": proba_test,
+})
+
+false_positives = results_df[
+    (results_df["y_true"] == 0) & (results_df["y_pred"] == 1)
+].copy()
+
+print(f"\nFalse Positives: {len(false_positives)}")
+if not false_positives.empty:
+    print(false_positives.head(15).to_string(index=False))
+
+
+# -----------------------------
+# 9) Plots
+# -----------------------------
 fpr, tpr, _ = roc_curve(y_valid, proba)
 roc_auc = auc(fpr, tpr)
 
@@ -269,7 +324,6 @@ plt.legend(loc="lower right")
 plt.tight_layout()
 plt.show()
 
-# ---- (B) Confusion Matrix at best threshold ----
 pred_best = (proba >= best_thr).astype(int)
 cm = confusion_matrix(y_valid, pred_best)
 
@@ -280,9 +334,8 @@ ax.set_title(f"Confusion Matrix (thr={best_thr:.2f})")
 plt.tight_layout()
 plt.show()
 
-# ---- (C) Feature Importance (GAIN) Top 20 ----
 topk = 20
-gain_top = gain_imp.head(topk)[::-1]  # reverse for nice horizontal bars
+gain_top = gain_imp.head(topk)[::-1]
 
 plt.figure()
 plt.barh(gain_top.index, gain_top.values)
@@ -291,7 +344,6 @@ plt.title(f"Top {topk} Feature Importances (Gain)")
 plt.tight_layout()
 plt.show()
 
-# ---- (D) Optional: Probability distribution by class ----
 plt.figure()
 plt.hist(proba[y_valid == 0], bins=40, alpha=0.7, label="Legit")
 plt.hist(proba[y_valid == 1], bins=40, alpha=0.7, label="Phish")
