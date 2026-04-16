@@ -114,6 +114,10 @@ def extract_page_features(url: str) -> dict:
         "title_matches_domain_brand": 0,
         "thin_page": 0,
         "suspicious_login_pattern": 0,
+        "auth_keyword_present": 0,
+        "auth_legit_context": 0,
+        "has_forgot_password_link": 0,
+        "has_docs_or_reference_context": 0,
     }
 
     response = _safe_get(url)
@@ -131,6 +135,7 @@ def extract_page_features(url: str) -> dict:
     links = _find_links(html, final_url)
     joined_links = " ".join(links).lower()
 
+    # --- basic trust links ---
     features["has_privacy_policy_link"] = _contains_any(
         joined_links + " " + html_lower,
         ["privacy policy", "/privacy", "privacy"]
@@ -151,6 +156,7 @@ def extract_page_features(url: str) -> dict:
         ["about us", "/about", "about"]
     )
 
+    # --- form + login ---
     features["has_login_form"] = int(
         ('type="password"' in html_lower) or ("type='password'" in html_lower)
     )
@@ -160,6 +166,7 @@ def extract_page_features(url: str) -> dict:
     features["has_footer"] = int("<footer" in html_lower)
     features["page_title_present"] = int("<title" in html_lower)
 
+    # --- form behavior ---
     form_actions = _extract_form_actions(html, final_url)
     if form_actions:
         same_domain_flags = [_same_domain(final_url, action) for action in form_actions]
@@ -169,11 +176,13 @@ def extract_page_features(url: str) -> dict:
         features["submits_to_same_domain"] = 0
         features["form_action_external_domain"] = 0
 
+    # --- content ---
     text_only = re.sub(r"<[^>]+>", " ", html)
     words = re.findall(r"\b\w+\b", text_only)
     features["word_count"] = len(words)
     features["thin_page"] = int(features["word_count"] < 200)
 
+    # --- identity signals ---
     features["has_phone_number"] = int(
         re.search(r"(\+?\d[\d\-\(\) ]{7,}\d)", html) is not None
     )
@@ -182,15 +191,42 @@ def extract_page_features(url: str) -> dict:
         re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", html) is not None
     )
 
+    # --- branding ---
     title_text = _extract_title(html).lower()
     domain_token = _domain_token(final_url).lower()
+
     features["title_matches_domain_brand"] = int(
         domain_token != "" and domain_token in title_text
     )
 
+    # --- suspicious login ---
     features["suspicious_login_pattern"] = int(
         features["has_password_field"] == 1 and
         features["form_action_external_domain"] == 1
+    )
+
+    # --- auth keyword detection ---
+    auth_keywords = ["login", "signin", "account", "billing", "verify", "auth", "settings"]
+
+    features["auth_keyword_present"] = int(
+        any(k in final_url.lower() for k in auth_keywords)
+    )
+
+    # --- legit auth context (VERY IMPORTANT) ---
+    features["auth_legit_context"] = int(
+        features["auth_keyword_present"] == 1 and
+        features["submits_to_same_domain"] == 1 and
+        features["has_password_field"] == 1
+    )
+
+    features["has_forgot_password_link"] = _contains_any(
+    joined_links + " " + html_lower,
+    ["forgot password", "reset password", "can't sign in"]
+    )
+
+    features["has_docs_or_reference_context"] = _contains_any(
+    final_url.lower() + " " + html_lower,
+    ["docs", "documentation", "reference", "developer", "guide", "api", "manual"]
     )
 
     return features
