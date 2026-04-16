@@ -1,0 +1,65 @@
+url,expected_label,category
+
+# --- TRUSTED / COMMON SITES ---
+https://www.google.com,legitimate,top_site
+https://www.github.com,legitimate,top_site
+https://www.bbc.co.uk,legitimate,top_site
+https://www.amazon.com,legitimate,top_site
+
+# --- DEEP LINKS (LEGIT BUT COMPLEX PATHS) ---
+https://github.com/jomo22/seniordesign_extrafeatures,legitimate,deep_link
+https://vercel.com,legitimate,deep_link
+https://www.nationalarchives.gov.uk/webarchive/,legitimate,deep_link
+https://developer.mozilla.org/en-US/docs/Web/JavaScript,legitimate,deep_link
+
+# --- SMALL / UNKNOWN LEGIT SITES ---
+https://www.nmap.org,legitimate,small_site
+https://www.archlinux.org,legitimate,small_site
+https://www.gimp.org,legitimate,small_site
+http://info.cern.ch,legitimate,small_site_http
+
+# --- EDUCATION / GOVERNMENT ---
+https://www.pvamu.edu,legitimate,edu
+https://www.nasa.gov,legitimate,gov
+https://www.nih.gov,legitimate,gov
+https://www.gov.uk,legitimate,gov
+
+# --- HOSTED SITES ---
+https://pages.github.com,legitimate,hosted_site
+https://vercel.com/templates,legitimate,hosted_site
+https://www.netlify.com,legitimate,hosted_site
+
+# --- FOREIGN / NON-US SITES ---
+https://www.lemonde.fr,legitimate,foreign
+https://www.spiegel.de,legitimate,foreign
+https://www.elpais.com,legitimate,foreign
+https://www.bbc.co.jp,legitimate,foreign
+
+# --- LEGIT LOGIN / AUTH PAGES ---
+https://accounts.google.com/signin,legitimate,auth_page
+https://github.com/login,legitimate,auth_page
+https://login.microsoftonline.com,legitimate,auth_page
+https://vercel.com/login,legitimate,auth_page
+https://wordpress.com/log-in,legitimate,auth_page
+
+# --- PHISHING: BRAND SPOOF (REALISTIC PATTERNS) ---
+http://paypal-login-secure.ru/verify,phishing,brand_spoof
+http://google-security-checkup.tk/login,phishing,brand_spoof
+http://amazon-verify-account.ml/update,phishing,brand_spoof
+
+# --- PHISHING: FAKE LOGIN STYLE ---
+http://secure-login-paypal.com/signin,phishing,fake_login
+http://account-update-google.com/verify,phishing,fake_login
+
+# --- PHISHING: STRUCTURAL ISSUES ---
+http://192.168.0.1/login,phishing,ip_address
+http://bit.ly/2VfXh9X,phishing,shortener
+
+# --- BAD TLS ---
+https://expired.badssl.com,phishing,bad_tls
+https://self-signed.badssl.com,phishing,bad_tls
+
+# --- EDGE CASES (LEGIT BUT LOOK SUSPICIOUS) ---
+https://example.com/login,legitimate,edge_case
+https://blog.github.com/security/,legitimate,edge_case
+https://medium.com/@towardsdatascience,legitimate,edge_case

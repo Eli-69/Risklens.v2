@@ -8,22 +8,20 @@ from urllib.parse import urlparse
 
 from src.features.build_features import extract_all_features
 
-# Load model + feature columns
 MODEL_PATH = Path("models/trained/risklens_model.pkl")
 COLS_PATH = Path("models/trained/feature_columns.pkl")
 
 model = joblib.load(MODEL_PATH)
 feature_cols = joblib.load(COLS_PATH)
 
-# ✅ Clean test URLs
 test_urls = [
-    "https://google.com",
+    "https://www.google.com",
     "https://paypal-login-secure.ru/verify",
-    "https://github.com",
+    "https://www.github.com",
     "http://example.com",
     "https://expired.badssl.com",
     "https://self-signed.badssl.com",
-    "https://bbc.co.uk",
+    "https://www.bbc.co.uk",
     "https://random-small-site.org",
     "https://nonsauto.com/",
     "https://www.pvamu.edu/",
@@ -32,7 +30,6 @@ test_urls = [
     "https://www.nationalarchives.gov.uk/webarchive/",
 ]
 
-# ✅ Trusted domains list
 trusted_domains = [
     "github.com",
     "google.com",
@@ -40,21 +37,18 @@ trusted_domains = [
     "amazon.com",
     "bbc.co.uk",
     "pvamu.edu",
-    "nationalarchives.gov.uk"
+    "nationalarchives.gov.uk",
 ]
 
 for url in test_urls:
     print("\n==============================")
     print("URL:", url)
 
-    # Extract features
-    features = extract_all_features(url)
+    features = extract_all_features(url, use_page_features=True)
 
-    # Convert to DataFrame
     X = pd.DataFrame([features])
     X = X.reindex(columns=feature_cols, fill_value=0)
 
-    # Predict
     proba = float(model.predict_proba(X)[0][1])
 
     if proba > 0.9:
@@ -66,25 +60,37 @@ for url in test_urls:
 
     decision_source = "model"
 
-    # ✅ HTTP softener
+    # HTTP softener
     if features.get("is_https_url", 0) == 0 and label == "PHISHING":
         label = "SUSPICIOUS"
         decision_source = "http_softener"
 
-    # ✅ Trusted domain override
+    # TLS invalid / missing on HTTPS should not end as LEGITIMATE
+    if features.get("is_https_url", 0) == 1 and features.get("has_cert", 0) == 0:
+        if label == "LEGITIMATE":
+            label = "SUSPICIOUS"
+            decision_source = "tls_invalid"
+
+    # Trusted domain override
     hostname = (urlparse(url).hostname or "").lower()
     if any(hostname.endswith(d) for d in trusted_domains):
         if label == "PHISHING":
             label = "LEGITIMATE"
             decision_source = "trusted_domain_override"
 
-    # Debug prints
     print("Score:", round(proba, 4))
     print("is_https:", features.get("is_https_url"))
     print("has_cert:", features.get("has_cert"))
     print("cert_valid_now:", features.get("cert_valid_now"))
     print("certificate_score:", features.get("certificate_score"))
     print("cert_days_to_expiry:", features.get("cert_days_to_expiry"))
+    print("page_fetch_ok:", features.get("page_fetch_ok"))
+    print("word_count:", features.get("word_count"))
+    print("thin_page:", features.get("thin_page"))
+    print("has_password_field:", features.get("has_password_field"))
+    print("form_action_external_domain:", features.get("form_action_external_domain"))
+    print("submits_to_same_domain:", features.get("submits_to_same_domain"))
+    print("suspicious_login_pattern:", features.get("suspicious_login_pattern"))
 
     print("Prediction:", label)
     print("Decision source:", decision_source)
