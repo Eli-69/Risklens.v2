@@ -43,21 +43,29 @@ GOOD_TOKENS = {"legitimate", "benign", "good", "clean", "0", "false", "no"}
 mask = df["type"].isin(BAD_TOKENS | GOOD_TOKENS)
 df = df[mask].copy()
 
-urls = df["url"].tolist()
-y = df["type"].isin(BAD_TOKENS).astype(int).to_numpy()
+# Create binary label
+df["label"] = df["type"].isin(BAD_TOKENS).astype(int)
 
-# TEMP LIMIT FOR TESTING
-urls = urls[:5000]
-y = y[:5000]
+# Realistic random sample of 15k rows
+SAMPLE_SIZE = 15000
+if len(df) < SAMPLE_SIZE:
+    raise ValueError(f"Dataset only has {len(df)} rows after filtering, cannot sample {SAMPLE_SIZE}.")
+
+df_sample = df.sample(n=SAMPLE_SIZE, random_state=42)
+
+# Final training arrays
+urls = df_sample["url"].tolist()
+y = df_sample["label"].to_numpy()
 
 total = len(y)
 counts = np.bincount(y)
 
-print("\n===== FULL DATASET DISTRIBUTION =====")
+print("\n===== SAMPLE DISTRIBUTION =====")
 print(f"Legitimate (0): {counts[0]} ({counts[0]/total:.2%})")
 print(f"Phishing   (1): {counts[1]} ({counts[1]/total:.2%})")
-print("Loaded rows:", len(df))
-print("Label counts:", np.bincount(y))
+print("Loaded rows from CSV:", len(df))
+print("Rows used for training sample:", len(df_sample))
+print("Sample label counts:", np.bincount(y))
 
 
 # -----------------------------
